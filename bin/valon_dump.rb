@@ -7,6 +7,7 @@ require 'valon'
 class Valon::Synth
   def dump_regs(synth)
     errs = 0
+    status = read_ctrl_status
     regs = read_registers(synth)
     regs.each_with_index do |r, i|
       printf "%d: %08x %032b", i, r, r
@@ -18,8 +19,13 @@ end
 
 vs = Valon::Synth.new(ARGV[0]||'/dev/ttyUSB0')
 
-puts 'Synth A'
+print 'Synth A ('
+print 'NOT ' unless vs.is_locked?(Valon::Synth::SYNTH_A)
+puts 'locked)'
 vs.dump_regs(Valon::Synth::SYNTH_A)
+
 puts
-puts 'Synth B'
+print 'Synth B ('
+print 'NOT ' unless vs.is_locked?(Valon::Synth::SYNTH_B)
+puts 'locked)'
 vs.dump_regs(Valon::Synth::SYNTH_B)
