@@ -268,7 +268,7 @@ module Valon
     end
 
     # Dynamically define methods to get/set A/B register fields
-    for field, (regnum, lsb, nbits) in FIELD_INFO
+    for field in FIELD_INFO.keys
       for synth, prefix in [[SYNTH_A, 'a'], [SYNTH_B, 'b']]
         eval <<-"_end"
           def #{prefix}_#{field}; get_field(:#{field}, #{synth}); end
@@ -309,14 +309,14 @@ module Valon
   def outdiv(rf_mhz)
     case rf_mhz
     when 2200.0..4400.0; return  1
-    when 1100.0..2200.0: return  2
-    when  550.0..1100.0: return  4
-    when  275.0..550.0:  return  8
-    when  137.5..275.0:  return 16
+    when 1100.0..2200.0; return  2
+    when  550.0..1100.0; return  4
+    when  275.0..550.0;  return  8
+    when  137.5..275.0;  return 16
     else
       raise 'out of range'
     end
   end
-  module function :outdiv
+  module_function :outdiv
 
 end
