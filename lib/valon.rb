@@ -44,6 +44,47 @@ module Valon
 
     LOCK_MASK = {SYNTH_A => 0x10, SYNTH_B => 0x20}
 
+    # Hash mapping field name to `[regnum, lsb, nbits]`.
+    FIELD_INFO = {
+      :int         => [0, 15, 16],
+      :frac        => [0,  3, 12],
+
+      :prescaler   => [1, 27,  1],
+      :phase       => [1, 15, 12],
+      :mod         => [1,  3, 12],
+
+      :noise_mode  => [2, 29,  2],
+      :muxout      => [2, 26,  3],
+      :ref_dbl     => [2, 25,  1],
+      :ref_divby2  => [2, 24,  1],
+      :r           => [2, 14, 10],
+      :dbl_buf     => [2, 13,  1],
+      :cp_current  => [2,  9,  4],
+      :ldf         => [2,  8,  1],
+      :ldp         => [2,  7,  1],
+      :pd_pol      => [2,  6,  1],
+      :pwr_down    => [2,  5,  1],
+      :cp_tristate => [2,  4,  1],
+      :cnt_reset   => [2,  3,  1],
+
+      :cyc_slip    => [3, 18,  1],
+      :clkdiv_mode => [3, 15,  2],
+      :clkdiv_val  => [3,  3, 12],
+
+      :fb_sel      => [4, 23,  1],
+      :rfdiv_sel   => [4, 20,  3],
+      :bs_clkdiv   => [4, 12,  8],
+      :vco_pwr_dn  => [4, 11,  1],
+      :mute_tld    => [4, 10,  1],
+      :auxout_sel  => [4,  9,  1],
+      :auxout_en   => [4,  8,  1],
+      :auxout_pwr  => [4,  6,  2],
+      :rfout_en    => [4,  5,  1],
+      :rfout_pwr   => [4,  3,  2],
+
+      :ldpin_mode  => [5, 22,  2]
+    }
+
     def initialize(port)
       @port = port
     end
@@ -206,6 +247,36 @@ module Valon
       write_command(CMD_WRITE_FLASH)
     end
 
+    # Register related operations
+
+    def get_field(field, synth=SYNTH_A)
+      regnum, lsb, nbits = FIELD_INFO[field]
+      raise "unknown field '#{field}'" unless regnum
+      regs = read_registers(synth)
+      mask = (1<<nbits) - 1
+      (regs[regnum] >> lsb) & mask
+    end
+
+    def set_field(field, value, synth=SYNTH_A)
+      regnum, lsb, nbits = FIELD_INFO[field]
+      raise "unknown field '#{field}'" unless regnum
+      regs = read_registers(synth)
+      mask = (1<<nbits) - 1
+      regs[regnum] &= ~(mask << lsb)
+      regs[regnum] |= (value & mask) << lsb
+      self
+    end
+
+    # Dynamically define methods to get/set A/B register fields
+    for field, (regnum, lsb, nbits) in FIELD_INFO
+      for synth, prefix in [[SYNTH_A, 'a'], [SYNTH_B, 'b']]
+        eval <<-"_end"
+          def #{prefix}_#{field}; get_field(:#{field}, #{synth}); end
+          def #{prefix}_#{field}=(val); set_field(:#{field}, val, #{synth}); end
+        _end
+      end
+    end
+
     # Higher level functionality
 
     def get_dbm(synth=SYNTH_A)
@@ -230,5 +301,22 @@ module Valon
       (read_ctrl_status & LOCK_MASK[synth]) != 0
     end
 
+  end # class Synth
+
+  # Return the output divider required to generate the desired frequency
+  # `rf_mhz` from within the VCO's frequency range (2200 to 4400 MHz).  Raises
+  # an exception if `rf_freq` is below 137.5 MHz or above 4400 MHz.
+  def outdiv(rf_mhz)
+    case rf_mhz
+    when 2200.0..4400.0; return  1
+    when 1100.0..2200.0: return  2
+    when  550.0..1100.0: return  4
+    when  275.0..550.0:  return  8
+    when  137.5..275.0:  return 16
+    else
+      raise 'out of range'
+    end
   end
+  module function :outdiv
+
 end
