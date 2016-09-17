@@ -29,3 +29,12 @@ print 'Synth B ('
 print 'NOT ' unless vs.is_locked?(Valon::Synth::SYNTH_B)
 puts 'locked)'
 vs.dump_regs(Valon::Synth::SYNTH_B)
+
+widths = Valon::Synth::FIELD_INFO.keys.map {|k| k.length}
+width = widths.max
+
+puts
+Valon::Synth::FIELD_INFO.keys.each do |f|
+  printf "%-*s  %5d  %5d\n", width, f,
+    vs.send("a_#{f}"), vs.send("b_#{f}")
+end
