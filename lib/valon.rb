@@ -302,6 +302,32 @@ module Valon
       (read_ctrl_status & LOCK_MASK[synth]) != 0
     end
 
+    def freq_pfd(synth=SYNTH_A)
+      ref_in = read_ref_frequency
+      d = get_field(:ref_dbl, synth)
+      t = get_field(:ref_divby2, synth)
+      r = get_field(:r, synth)
+      r = 1 if r == 0
+      ref_in * ((1+d)/(r*(1+t)))
+    end
+
+    # Assumes that feedback is the fundamental (i.e. not divided)
+    def freq_vco(synth=SYNTH_A)
+      f_pfd = freq_pfd(synth)
+      int = get_field(:int, synth)
+      frac = get_field(:frac, synth)
+      mod = get_field(:mod, synth)
+      mod = 1 if mod == 0
+      f_pfd * (int + Rational(frac,mod))
+    end
+
+    def freq_rf(synth=SYNTH_A)
+      f_vco = freq_vco(synth)
+      outdiv = 1 << get_field(:rfdiv_sel, synth)
+      f_rf = f_vco / outdiv
+      f_rf.denominator == 1 ? f_rf.to_i : f_rf
+    end
+
   end # class Synth
 
   # Return the output divider required to generate the desired frequency
