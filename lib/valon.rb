@@ -264,6 +264,7 @@ module Valon
       mask = (1<<nbits) - 1
       regs[regnum] &= ~(mask << lsb)
       regs[regnum] |= (value & mask) << lsb
+      write_registers(regs, synth)
       self
     end
 
