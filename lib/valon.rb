@@ -176,39 +176,47 @@ module Valon
     end
     protected :read_command
 
-    def write_registers(regs, synth=SYNTH_A)
+    def write_registers(regs, synth)
       data = regs.pack('I>6')
       write_command(CMD_REG, data, synth)
     end
 
-    def read_registers(synth=SYNTH_A)
+    def read_registers(synth)
       read_command(CMD_REG, synth).unpack('I>6')
     end
 
-    def write_ref_frequency(ref_freq)
+    def ref_frequency=(ref_freq)
       data = [ref_freq].pack('I>')
       write_command(CMD_REF_FREQ, data)
     end
+    alias ref_freq= ref_frequency=
 
-    def read_ref_frequency
+    def ref_frequency
       read_command(CMD_REF_FREQ).unpack('I>')[0]
     end
+    alias ref_freq ref_frequency
 
-    def write_label(label)
+    def label=(label)
       data = label.ljust(16)[0...16]
       write_command(CMD_LABEL, data)
     end
 
-    def read_label
+    def label
       read_command(CMD_LABEL).strip
     end
 
-    def write_freq_range(min_freq, max_freq)
-      data = [min_freq, max_freq].pack('S>2')
+    # Set VCO frequency range.  `minmax_mhz` can be Array or Range (or anything
+    # else that responds to #first and #last.  `minmax_mhz.first` is minimum
+    # VCO frequency (in MHz); `minmax_mhz.last` is maximum (in MHz).  These
+    # values are not used by the synthesizer itself.  They are merley
+    # informative values for humans or configuration software.
+    def vco_range=(minmax_mhz)
+      data = [minmax_mhz.first, minmax_mhz.last].pack('S>2')
       write_command(CMD_FREQ_RANGE, data)
     end
 
-    def read_freq_range
+    # Return `[min_mhz, max_mhz]` VCO frequencies (in MHz).
+    def vco_range
       read_command(CMD_FREQ_RANGE).unpack('S>2')
     end
 
@@ -234,12 +242,12 @@ module Valon
     end
     protected :read_freq_settings
 
-    def write_ctrl_status(ctrl)
+    def ctrl_status=(ctrl)
       data = [ctrl].pack('C')
       write_command(CMD_CTRL_STATUS, data)
     end
 
-    def read_ctrl_status
+    def ctrl_status
       read_command(CMD_CTRL_STATUS).ord
     end
 
@@ -249,7 +257,7 @@ module Valon
 
     # Register related operations
 
-    def get_field(field, synth=SYNTH_A)
+    def get_field(field, synth)
       regnum, lsb, nbits = FIELD_INFO[field]
       raise "unknown field '#{field}'" unless regnum
       regs = read_registers(synth)
@@ -257,7 +265,7 @@ module Valon
       (regs[regnum] >> lsb) & mask
     end
 
-    def set_field(field, value, synth=SYNTH_A)
+    def set_field(field, value, synth)
       regnum, lsb, nbits = FIELD_INFO[field]
       raise "unknown field '#{field}'" unless regnum
       regs = read_registers(synth)
@@ -280,13 +288,25 @@ module Valon
 
     # Higher level functionality
 
-    def get_dbm(synth=SYNTH_A)
+    def get_dbm(synth)
       regs = read_registers(synth)
       rflevel = (regs[4] >> 3) & 0x03
       RFLEVEL_TO_DBM[rflevel]
     end
 
-    def set_dbm(dbm, synth=SYNTH_A)
+    # Return output power of syntheisizer A (in dBm).
+    def a_dbm
+      get_dbm(SYNTH_A)
+    end
+
+    # Return output power of syntheisizer B (in dBm).
+    def b_dbm
+      get_dbm(SYNTH_B)
+    end
+
+    # Set output power of specified syntheisizer (in dBm).
+    # `dbm` can be -4, -1, +2, or +5.
+    def set_dbm(dbm, synth)
       rflevel = DBM_TO_RFLEVEL[dbm]
       raise "unsupported dbm #{dbm}" unless rflevel
       regs = read_registers(synth)
@@ -295,37 +315,93 @@ module Valon
       write_registers(regs, synth)
     end
 
-    def is_locked?(synth=SYNTH_A)
+    # Set output power of syntheisizer A (in dBm).
+    # `dbm` can be -4, -1, +2, or +5.
+    def a_dbm=(dbm)
+      set_dbm(dbm, SYNTH_A)
+    end
+
+    # Set output power of syntheisizer B (in dBm).
+    # `dbm` can be -4, -1, +2, or +5.
+    def b_dbm=(dbm)
+      set_dbm(dbm, SYNTH_B)
+    end
+
+    # Returns true if the synthesizer is configured to use the external
+    # reference
+    def is_ext_ref?
+      (ctrl_status & EXT_REF) != 0
+    end
+
+    def ext_ref=(extref)
+      ctrl_status = extref ? EXT_REF : INT_REF
+    end
+
+    def is_locked?(synth)
       if synth != SYNTH_A && synth != SYNTH_B
         raise "invalid synthesizer #{synth}"
       end
-      (read_ctrl_status & LOCK_MASK[synth]) != 0
+      (ctrl_status & LOCK_MASK[synth]) != 0
     end
 
-    def freq_pfd(synth=SYNTH_A)
-      ref_in = read_ref_frequency
+    def is_a_locked?
+      is_locked?(SYNTH_A)
+    end
+
+    def is_b_locked?
+      is_locked?(SYNTH_B)
+    end
+
+    def freq_pfd(synth)
+      ref_in = ref_frequency
       d = get_field(:ref_dbl, synth)
       t = get_field(:ref_divby2, synth)
       r = get_field(:r, synth)
       r = 1 if r == 0
-      ref_in * ((1+d)/(r*(1+t)))
+      f_pfd = ref_in * Rational(1+d, r*(1+t))
+      f_pfd.denominator == 1 ? f_pfd.to_i : f_pfd
+    end
+
+    def freq_a_pfd
+      freq_pfd(SYNTH_A)
+    end
+
+    def freq_b_pfd
+      freq_pfd(SYNTH_B)
     end
 
     # Assumes that feedback is the fundamental (i.e. not divided)
-    def freq_vco(synth=SYNTH_A)
+    def freq_vco(synth)
       f_pfd = freq_pfd(synth)
       int = get_field(:int, synth)
       frac = get_field(:frac, synth)
       mod = get_field(:mod, synth)
       mod = 1 if mod == 0
-      f_pfd * (int + Rational(frac,mod))
+      f_vco = f_pfd * (int + Rational(frac,mod))
+      f_vco.denominator == 1 ? f_vco.to_i : f_vco.denominator
     end
 
-    def freq_rf(synth=SYNTH_A)
+    def freq_a_vco
+      freq_vco(SYNTH_A)
+    end
+
+    def freq_b_vco
+      freq_vco(SYNTH_B)
+    end
+
+    def freq_rf(synth)
       f_vco = freq_vco(synth)
       outdiv = 1 << get_field(:rfdiv_sel, synth)
-      f_rf = f_vco / outdiv
+      f_rf = Rational(f_vco, outdiv)
       f_rf.denominator == 1 ? f_rf.to_i : f_rf
+    end
+
+    def freq_a_rf
+      freq_rf(SYNTH_A)
+    end
+
+    def freq_b_rf
+      freq_rf(SYNTH_B)
     end
 
   end # class Synth
