@@ -417,7 +417,7 @@ module Valon
     when  275.0..550.0;  return  8
     when  137.5..275.0;  return 16
     else
-      raise 'out of range'
+      raise "#{rf_mhz} MHz is out of range [137.5 to 4400.0]"
     end
   end
   module_function :outdiv
