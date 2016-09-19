@@ -87,6 +87,38 @@ module Valon
 
     def initialize(port)
       @port = port
+      read_registers
+    end
+
+    attr_reader :a_regs
+    attr_reader :b_regs
+
+    def normalize_regs(regs)
+      if !(Array === regs) || regs.length != 6
+        raise 'register data must be Array of length 6'
+      end
+      regs.pack('I>6').unpack('I>6')
+    end
+    protected :normalize_regs
+
+    def a_registers=(regs)
+      @a_regs = normalize_regs(regs)
+    end
+
+    def b_registers=(regs)
+      @b_regs = normalize_regs(regs)
+    end
+
+    def registers=(*regs)
+      ar, br = *regs
+      ar = normalize_regs(ar) if ar
+      br = normalize_regs(br) if br
+      @a_regs = ar if ar
+      @b_regs = br if br
+    end
+
+    def registers
+      [@a_regs, @b_regs]
     end
 
     def serialport(read_timeout=200)
@@ -176,13 +208,23 @@ module Valon
     end
     protected :read_command
 
-    def write_registers(regs, synth)
-      data = regs.pack('I>6')
-      write_command(CMD_REG, data, synth)
+    def write_registers(synth=nil)
+      # If not writing only to synth B
+      if synth != SYNTH_B
+        a_data = @a_regs.pack('I>6')
+        write_command(CMD_REG, a_data, SYNTH_A)
+      end
+      # If not writing only to synth A
+      if synth != SYNTH_A
+        b_data = @b_regs.pack('I>6')
+        write_command(CMD_REG, b_data, SYNTH_A)
+      end
     end
 
-    def read_registers(synth)
-      read_command(CMD_REG, synth).unpack('I>6')
+    def read_registers
+      @a_regs = read_command(CMD_REG, SYNTH_A).unpack('I>6')
+      @b_regs = read_command(CMD_REG, SYNTH_B).unpack('I>6')
+      self
     end
 
     def ref_frequency=(ref_freq)
@@ -260,21 +302,30 @@ module Valon
     def get_field(field, synth)
       regnum, lsb, nbits = FIELD_INFO[field]
       raise "unknown field '#{field}'" unless regnum
-      regs = read_registers(synth)
+      regs = case synth
+             when SYNTH_A; @a_regs
+             when SYNTH_B; @b_regs
+             else raise "Invalid synthesizer #{synth}"
+             end
       mask = (1<<nbits) - 1
       (regs[regnum] >> lsb) & mask
     end
+    protected :get_field
 
     def set_field(field, value, synth)
       regnum, lsb, nbits = FIELD_INFO[field]
       raise "unknown field '#{field}'" unless regnum
-      regs = read_registers(synth)
+      regs = case synth
+             when SYNTH_A; @a_regs
+             when SYNTH_B; @b_regs
+             else raise "Invalid synthesizer #{synth}"
+             end
       mask = (1<<nbits) - 1
       regs[regnum] &= ~(mask << lsb)
       regs[regnum] |= (value & mask) << lsb
-      write_registers(regs, synth)
       self
     end
+    protected :set_field
 
     # Dynamically define methods to get/set A/B register fields
     for field in FIELD_INFO.keys
@@ -288,20 +339,18 @@ module Valon
 
     # Higher level functionality
 
-    def get_dbm(synth)
-      regs = read_registers(synth)
-      rflevel = (regs[4] >> 3) & 0x03
-      RFLEVEL_TO_DBM[rflevel]
+    def get_dbm
+      [RFLEVEL_TO_DBM[a_rfout_pwr], RFLEVEL_TO_DBM[b_rfout_pwr]]
     end
 
     # Return output power of syntheisizer A (in dBm).
     def a_dbm
-      get_dbm(SYNTH_A)
+      get_dbm[0]
     end
 
     # Return output power of syntheisizer B (in dBm).
     def b_dbm
-      get_dbm(SYNTH_B)
+      get_dbm[1]
     end
 
     # Set output power of specified syntheisizer (in dBm).
@@ -309,10 +358,7 @@ module Valon
     def set_dbm(dbm, synth)
       rflevel = DBM_TO_RFLEVEL[dbm]
       raise "unsupported dbm #{dbm}" unless rflevel
-      regs = read_registers(synth)
-      regs[4] &= ~0x18
-      regs[4] |= (rflevel << 3)
-      write_registers(regs, synth)
+      set_field(:rfout_pwr, rflevel, synth)
     end
 
     # Set output power of syntheisizer A (in dBm).

@@ -4,15 +4,11 @@
 
 require 'valon'
 
-class Valon::Synth
-  def dump_regs(synth)
-    errs = 0
-    regs = read_registers(synth)
-    regs.each_with_index do |r, i|
-      printf "%d: %08x %032b", i, r, r
-      print " BAD" if (r&7) != i
-      puts
-    end
+def dump_regs(regs)
+  regs.each_with_index do |r, i|
+    printf "%d: %08x %032b", i, r, r
+    print " BAD" if (r&7) != i
+    puts
   end
 end
 
@@ -43,11 +39,11 @@ EOF
 
 puts
 puts 'Synth A registers:'
-vs.dump_regs(Valon::Synth::SYNTH_A)
+dump_regs(vs.registers[0])
 
 puts
 puts 'Synth B registers:'
-vs.dump_regs(Valon::Synth::SYNTH_B)
+dump_regs(vs.registers[1])
 
 widths = Valon::Synth::FIELD_INFO.keys.map {|k| k.length}
 width = widths.max
