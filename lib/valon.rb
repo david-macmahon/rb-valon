@@ -3,9 +3,7 @@ require 'valon/version'
 
 module Valon
 
-  # Class for accesssing Valon synthesizer
-  class Synth
-
+  module Constants
     RD = 0x80
     WR = 0x00
 
@@ -84,6 +82,116 @@ module Valon
 
       :ldpin_mode  => [5, 22,  2]
     }
+  end # module Constants
+
+  include Constants
+
+  def normalize_regs(regs)
+    if !(Array === regs) || regs.length != 6
+      raise 'register data must be Array of length 6'
+    end
+    regs.pack('I>6').unpack('I>6')
+  end
+  module_function :normalize_regs
+
+  # Returns a 1 character String representing checksum byte for `strings`.
+  def generate_checksum(*strings)
+    csum = 0
+    strings.each {|s| s.each_byte {|c| csum += c}}
+    (csum % 256).chr
+  end
+  module_function :generate_checksum
+
+  # Returns true if `csum` equals the checksum generated from `strings`.
+  def checksum_ok?(csum, *strings)
+    csum ? csum.chr == generate_checksum(*strings) : false
+  end
+  module_function :checksum_ok?
+
+  # Register related operations
+
+  def get_field(regs, field)
+    regnum, lsb, nbits = FIELD_INFO[field]
+    raise "unknown field '#{field}'" unless regnum
+    mask = (1<<nbits) - 1
+    (regs[regnum] >> lsb) & mask
+  end
+  module_function :get_field
+
+  def set_field(regs, field, value)
+    regnum, lsb, nbits = FIELD_INFO[field]
+    raise "unknown field '#{field}'" unless regnum
+    mask = (1<<nbits) - 1
+    regs[regnum] &= ~(mask << lsb)
+    regs[regnum] |= (value & mask) << lsb
+  end
+  module_function :set_field
+
+  # Return the output divider selector required to generate the desired
+  # frequency `rf_mhz` from within the VCO's frequency range (2200 to 4400
+  # MHz).  Raises an exception if `rf_freq` is below 137.5 MHz or above 4400
+  # MHz.  The output divider selector os log2 of the output divider.
+  def outdiv_sel(rf_mhz)
+    case rf_mhz
+    when 2200.0..4400.0; return 0
+    when 1100.0..2200.0; return 1
+    when  550.0..1100.0; return 2
+    when  275.0..550.0;  return 3
+    when  137.5..275.0;  return 4
+    else
+      raise "#{rf_mhz} MHz is out of range [137.5 to 4400.0]"
+    end
+  end
+  module_function :outdiv_sel
+
+  # Return the output divider required to generate the desired frequency
+  # `rf_mhz` from within the VCO's frequency range (2200 to 4400 MHz).  Raises
+  # an exception if `rf_freq` is below 137.5 MHz or above 4400 MHz.
+  def outdiv(rf_mhz)
+    1 << outdiv_sel(rf_mhz)
+  end
+  module_function :outdiv
+
+  def set_freq_rf(regs, hz, ref_hz=10_000_000)
+    # Limit to integer Hz
+    hz = hz.round
+    ref_hz = ref_hz.round
+
+    # Get outdiv selector (validates `hz`) and set that field
+    outdivsel = outdiv_sel(hz/1e6)
+    set_field(regs, :rfdiv_sel, outdivsel)
+
+    # Set ref doubler, clear ref div-by-2, set R counter to 1.  It's posible
+    # that some ref freqs could make these choices invalid.  If that's ever
+    # discovered to be a problem, this logic will have to be smarter.
+    set_field(regs, :ref_dbl, 1)
+    set_field(regs, :ref_divby2, 0)
+    set_field(regs, :r, 1)
+    # Calculate "phase frequency detector" frequency
+    f_pfd = 2 * ref_hz
+    # Set bs_clkdiv to ensure max "band select clock" freq of 125 kHz
+    set_field(regs, :bs_clkdiv, (f_pfd/125e3).ceil)
+    # Set feedback select to use VCO output directly
+    set_field(regs, :fb_sel, 1)
+    # Compute f_vco
+    f_vco = hz << outdivsel
+    # Compute int, frac_mod
+    int, frac_mod = Rational(f_vco, f_pfd).divmod(1)
+    # Set int, frac, and mod fields
+    # TODO set int_n field if appropriate?
+    set_field(regs, :int, int)
+    set_field(regs, :frac, frac_mod.numerator)
+    set_field(regs, :mod, frac_mod.denominator)
+    # Set other misc fields
+    set_field(regs, :phase, 1) # recommended
+    set_field(regs, :noise_mode, 0) # low noise
+  end
+  module_function :set_freq_rf
+
+  # Class for accesssing Valon synthesizer
+  class Synth
+
+    include Constants
 
     def initialize(port)
       @port = port
@@ -93,32 +201,29 @@ module Valon
     attr_reader :a_regs
     attr_reader :b_regs
 
-    def normalize_regs(regs)
-      if !(Array === regs) || regs.length != 6
-        raise 'register data must be Array of length 6'
-      end
-      regs.pack('I>6').unpack('I>6')
-    end
-    protected :normalize_regs
-
     def a_registers=(regs)
-      @a_regs = normalize_regs(regs)
+      @a_regs = Valon.normalize_regs(regs)
     end
 
     def b_registers=(regs)
-      @b_regs = normalize_regs(regs)
+      @b_regs = Valon.normalize_regs(regs)
     end
 
     def registers=(*regs)
       ar, br = *regs
-      ar = normalize_regs(ar) if ar
-      br = normalize_regs(br) if br
+      ar = Valon.normalize_regs(ar) if ar
+      br = Valon.normalize_regs(br) if br
       @a_regs = ar if ar
       @b_regs = br if br
     end
 
-    def registers
-      [@a_regs, @b_regs]
+    def registers(synth=nil)
+      case synth
+      when SYNTH_A, 0; @a_regs
+      when SYNTH_B, 1; @b_regs
+      when nil; [@a_regs, @b_regs]
+      else raise "invalid synthesizer #{synth}"
+      end
     end
 
     def serialport(read_timeout=200)
@@ -137,18 +242,6 @@ module Valon
       ensure
         sp.close if sp
       end
-    end
-
-    # Returns a 1 character String representing checksum byte for `strings`.
-    def self.generate_checksum(*strings)
-      csum = 0
-      strings.each {|s| s.each_byte {|c| csum += c}}
-      (csum % 256).chr
-    end
-
-    # Returns true if `csum` equals the checksum generated from `strings`.
-    def self.checksum_ok?(csum, *strings)
-      csum ? csum.chr == generate_checksum(*strings) : false
     end
 
     # Writes `cmd` plus `data` plus calculated checksum of `data` to Valon
@@ -172,7 +265,7 @@ module Valon
 
       serialport do |sp|
         cmd = WR|synth|cmd unless cmd == CMD_WRITE_FLASH
-        csum = self.class.generate_checksum(cmd.chr, data)
+        csum = Valon.generate_checksum(cmd.chr, data)
         cmd_data_csum = [cmd, data, csum].pack('CA*A')
         sp.write(cmd_data_csum)
         ack = sp.read(1).ord
@@ -198,7 +291,7 @@ module Valon
         sp.write(cmd.chr)
         data = sp.read(length)
         csum = sp.read(1)
-        if !self.class.checksum_ok?(csum, data)
+        if !Valon.checksum_ok?(csum, data)
           #p "data=#{data.inspect} (len #{data.length})"
           #p "csum=#{csum.inspect}"
           raise 'checksum error'
@@ -217,7 +310,7 @@ module Valon
       # If not writing only to synth A
       if synth != SYNTH_A
         b_data = @b_regs.pack('I>6')
-        write_command(CMD_REG, b_data, SYNTH_A)
+        write_command(CMD_REG, b_data, SYNTH_B)
       end
     end
 
@@ -297,42 +390,12 @@ module Valon
       write_command(CMD_WRITE_FLASH)
     end
 
-    # Register related operations
-
-    def get_field(field, synth)
-      regnum, lsb, nbits = FIELD_INFO[field]
-      raise "unknown field '#{field}'" unless regnum
-      regs = case synth
-             when SYNTH_A; @a_regs
-             when SYNTH_B; @b_regs
-             else raise "Invalid synthesizer #{synth}"
-             end
-      mask = (1<<nbits) - 1
-      (regs[regnum] >> lsb) & mask
-    end
-    protected :get_field
-
-    def set_field(field, value, synth)
-      regnum, lsb, nbits = FIELD_INFO[field]
-      raise "unknown field '#{field}'" unless regnum
-      regs = case synth
-             when SYNTH_A; @a_regs
-             when SYNTH_B; @b_regs
-             else raise "Invalid synthesizer #{synth}"
-             end
-      mask = (1<<nbits) - 1
-      regs[regnum] &= ~(mask << lsb)
-      regs[regnum] |= (value & mask) << lsb
-      self
-    end
-    protected :set_field
-
     # Dynamically define methods to get/set A/B register fields
     for field in FIELD_INFO.keys
-      for synth, prefix in [[SYNTH_A, 'a'], [SYNTH_B, 'b']]
+      for prefix in ['a', 'b']
         eval <<-"_end"
-          def #{prefix}_#{field}; get_field(:#{field}, #{synth}); end
-          def #{prefix}_#{field}=(val); set_field(:#{field}, val, #{synth}); end
+          def #{prefix}_#{field}; Valon.get_field(@#{prefix}_regs, :#{field}); end
+          def #{prefix}_#{field}=(val); Valon.set_field(@#{prefix}_regs, :#{field}, val); end
         _end
       end
     end
@@ -358,7 +421,7 @@ module Valon
     def set_dbm(dbm, synth)
       rflevel = DBM_TO_RFLEVEL[dbm]
       raise "unsupported dbm #{dbm}" unless rflevel
-      set_field(:rfout_pwr, rflevel, synth)
+      Valon.set_field(registers(synth), :rfout_pwr, rflevel)
     end
 
     # Set output power of syntheisizer A (in dBm).
@@ -380,7 +443,7 @@ module Valon
     end
 
     def ext_ref=(extref)
-      ctrl_status = extref ? EXT_REF : INT_REF
+      self.ctrl_status = extref ? EXT_REF : INT_REF
     end
 
     def is_locked?(synth)
@@ -398,11 +461,12 @@ module Valon
       is_locked?(SYNTH_B)
     end
 
-    def freq_pfd(synth)
-      ref_in = ref_frequency
-      d = get_field(:ref_dbl, synth)
-      t = get_field(:ref_divby2, synth)
-      r = get_field(:r, synth)
+    def freq_pfd(synth, ref_in=nil)
+      ref_in ||= ref_frequency
+      ref_in = 10_000_000 if ref_in == 0
+      d = Valon.get_field(registers(synth), :ref_dbl)
+      t = Valon.get_field(registers(synth), :ref_divby2)
+      r = Valon.get_field(registers(synth), :r)
       r = 1 if r == 0
       f_pfd = ref_in * Rational(1+d, r*(1+t))
       f_pfd.denominator == 1 ? f_pfd.to_i : f_pfd
@@ -419,9 +483,9 @@ module Valon
     # Assumes that feedback is the fundamental (i.e. not divided)
     def freq_vco(synth)
       f_pfd = freq_pfd(synth)
-      int = get_field(:int, synth)
-      frac = get_field(:frac, synth)
-      mod = get_field(:mod, synth)
+      int = Valon.get_field(registers(synth), :int)
+      frac = Valon.get_field(registers(synth), :frac)
+      mod = Valon.get_field(registers(synth), :mod)
       mod = 1 if mod == 0
       f_vco = f_pfd * (int + Rational(frac,mod))
       f_vco.denominator == 1 ? f_vco.to_i : f_vco.denominator
@@ -437,7 +501,7 @@ module Valon
 
     def freq_rf(synth)
       f_vco = freq_vco(synth)
-      outdiv = 1 << get_field(:rfdiv_sel, synth)
+      outdiv = 1 << Valon.get_field(registers(synth), :rfdiv_sel)
       f_rf = Rational(f_vco, outdiv)
       f_rf.denominator == 1 ? f_rf.to_i : f_rf
     end
@@ -450,22 +514,20 @@ module Valon
       freq_rf(SYNTH_B)
     end
 
-  end # class Synth
-
-  # Return the output divider required to generate the desired frequency
-  # `rf_mhz` from within the VCO's frequency range (2200 to 4400 MHz).  Raises
-  # an exception if `rf_freq` is below 137.5 MHz or above 4400 MHz.
-  def outdiv(rf_mhz)
-    case rf_mhz
-    when 2200.0..4400.0; return  1
-    when 1100.0..2200.0; return  2
-    when  550.0..1100.0; return  4
-    when  275.0..550.0;  return  8
-    when  137.5..275.0;  return 16
-    else
-      raise "#{rf_mhz} MHz is out of range [137.5 to 4400.0]"
+    # Set output frequency of synthesizer A to `hz` Hz.
+    def freq_a_rf=(hz, ref_in=nil)
+      ref_in ||= ref_frequency
+      ref_in = 10_000_000 if ref_in == 0
+      Valon.set_freq_rf(@a_regs, hz, ref_in)
     end
-  end
-  module_function :outdiv
+
+    # Set output frequency of synthesizer A to `hz` Hz.
+    def freq_b_rf=(hz, ref_in=nil)
+      ref_in ||= ref_frequency
+      ref_in = 10_000_000 if ref_in == 0
+      Valon.set_freq_rf(@b_regs, hz, ref_in)
+    end
+
+  end # class Synth
 
 end
