@@ -291,7 +291,7 @@ module Valon
         sp.write(cmd.chr)
         data = sp.read(length)
         csum = sp.read(1)
-        if !Valon.checksum_ok?(csum, data)
+        if !csum || !Valon.checksum_ok?(csum, data)
           #p "data=#{data.inspect} (len #{data.length})"
           #p "csum=#{csum.inspect}"
           raise 'checksum error'
