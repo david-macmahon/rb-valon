@@ -194,12 +194,15 @@ module Valon
     include Constants
 
     def initialize(port)
+      @debug = false
       @port = port
       read_registers
     end
 
     attr_reader :a_regs
     attr_reader :b_regs
+
+    attr_accessor :debug
 
     def a_registers=(regs)
       @a_regs = Valon.normalize_regs(regs)
@@ -291,6 +294,11 @@ module Valon
         sp.write(cmd.chr)
         data = sp.read(length)
         csum = sp.read(1)
+        if @debug
+          print"data"
+          data.each_char {|c| print " %02x" % c.ord}
+          puts csum ? "\ncsum %02x" % csum.ord : "\ncsum --"
+        end
         if !csum || !Valon.checksum_ok?(csum, data)
           #p "data=#{data.inspect} (len #{data.length})"
           #p "csum=#{csum.inspect}"
