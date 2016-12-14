@@ -232,6 +232,8 @@ module Valon
     def serialport(read_timeout=200)
       # Create serial port object
       sp = SerialPort.new(@port, 9600, 8, 1, SerialPort::NONE)
+      # Turn off flow control
+      sp.flow_control = SerialPort::NONE
       # Set read timeout (default to 200 ms as is done in the ValonSynth Python
       # library)
       sp.read_timeout = read_timeout
