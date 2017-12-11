@@ -229,6 +229,23 @@ module Valon
       end
     end
 
+    def registers_valid?(verbose=false)
+      ok = true
+      @a_regs.each_with_index do |r, i|
+        if r&7 != i
+          printf "synth A register %d: %08x %032b BAD", i, r, r
+          ok = false
+        end
+      end
+      @b_regs.each_with_index do |r, i|
+        if r&7 != i
+          printf "synth B register %d: %08x %032b BAD", i, r, r
+          ok = false
+        end
+      end
+      return ok
+    end
+
     def serialport(read_timeout=200)
       # Create serial port object
       sp = SerialPort.new(@port, 9600, 8, 1, SerialPort::NONE)
