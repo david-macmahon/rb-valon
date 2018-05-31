@@ -33,4 +33,7 @@ vs = Valon::Synth.new(ARGV[1]||'/dev/ttyUSB0')
 vs.a_registers = regs[0]
 vs.b_registers = regs[1]
 
-vs.write_flash if vs.registers_valid?
+if vs.registers_valid?
+  vs.write_registers
+  vs.write_flash
+end
