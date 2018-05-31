@@ -233,13 +233,13 @@ module Valon
       ok = true
       @a_regs.each_with_index do |r, i|
         if r&7 != i
-          printf "synth A register %d: %08x %032b BAD", i, r, r
+          printf "synth A register %d: %08x %032b BAD\n", i, r, r
           ok = false
         end
       end
       @b_regs.each_with_index do |r, i|
         if r&7 != i
-          printf "synth B register %d: %08x %032b BAD", i, r, r
+          printf "synth B register %d: %08x %032b BAD\n", i, r, r
           ok = false
         end
       end
